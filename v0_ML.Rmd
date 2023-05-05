@@ -1,0 +1,110 @@
+```{r libraries, message=FALSE, warning=FALSE}
+
+library(dplyr)
+library(qtlcharts)
+library(readr)
+library(tidymodels)
+library(caret)
+library(pROC)
+library(conflicted)
+
+conflicted::conflict_prefer_all("readr", losers = c("scales"))
+conflicted::conflicts_prefer(dplyr::filter)
+
+```
+
+```{r data load}
+
+id <- "1YRJorJ6F3o3PVwWH6LrbXBgFbT36gg74"
+Base = read_csv(
+  sprintf("https://docs.google.com/uc?id=%s&export=download&confirm=t", id),
+  col_types = list(
+    .default = "n",
+    fraud_bool = "f",
+    payment_type = "f",
+    employment_status = "f",
+    housing_status = "f",
+    source = "f",
+    device_os = "f"
+    )
+  )
+
+
+set.seed(2023)
+df = Base %>% sample_n(10000)
+train = df %>% filter(month < 6) %>% select(- month)
+test = df %>% filter(month >= 6) %>% select(- month)
+df = df %>% select(- month)
+
+# TODO: cv and grids
+
+```
+
+```{r func}
+
+get_threshold = function(data, FPR = 0.05){
+  values = data[[1]]
+  truth = data[[ncol(data)]]
+  roc_res = pROC::roc(truth, values, quiet = TRUE)
+  thresholds = roc_res$thresholds
+  specificities = roc_res$sensitivities
+
+  new = abs(0.05 - (1 - specificities))
+  
+  return(thresholds[which.min(new)])
+}
+
+get_sensitivity = function(pred_data){
+  
+  confusionMatrix(
+    reference = pred_data$truth,
+    data =
+      ifelse(pred_data[1] > get_threshold(pred), "1", "0") %>%
+      factor(c("1", "0")),
+      positive = "1"
+  ) -> confmatrix
+  return(confmatrix$byClass[["Sensitivity"]])
+  
+}
+
+```
+
+```{r random forest}
+
+#lm_spec = linear_reg() %>% set_engine("lm")
+
+model_recipe =
+  recipe(fraud_bool ~ ., data = df) %>% 
+  step_zv(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) #%>%
+  step_dummy(all_factor_predictors()) %>% 
+  step_pca(all_numeric_predictors())
+
+model_recipe_df = model_recipe %>% prep() %>% juice()
+
+model_spec = 
+  rand_forest() %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+wf = workflow() %>% 
+  add_recipe(model_recipe) %>% 
+  add_model(model_spec)
+
+wf_trained = wf %>% fit(train)
+
+pred = wf_trained %>% predict(test, type = "prob") %>% cbind(truth = test$fraud_bool)
+
+#wf_trained$fit$fit$fit %>% ranger::treeInfo()
+get_sensitivity(pred)
+
+```
+
+```{r interactive cormatrix}
+
+iplotCorr(df %>% select(where(is.numeric), -device_fraud_count), reorder = T)
+
+df %>% summary()
+
+```
+
