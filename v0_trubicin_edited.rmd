@@ -1,0 +1,619 @@
+---
+title: "project"
+output: html_document
+date: "2023-04-06"
+---
+
+```{r message=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(plyr)
+library(purrr)
+library(nlme)
+library(lme4)
+library(survival)
+```
+
+```{r}
+
+id <- "1YRJorJ6F3o3PVwWH6LrbXBgFbT36gg74"
+Base = read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download&confirm=t", id))
+
+# Count the number of occurrences of each value in the 'device_fraud_count' column
+table(Base$device_fraud_count)
+
+# Remove the 'device_fraud_count' column from the data frame
+Base <- subset(Base, select = -device_fraud_count)
+
+# View the modified data frame
+View(Base)
+
+```
+
+```{r}
+#prev_address_month_count - Потенциальное удаление
+#current_address_month_count - Потенциальное удаление
+#days_since_request
+#velocity_6h - целых 3 столбца. Думаю надо оставить только 1.
+#Validity of provided home phone.
+```
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), y = income, fill = factor(fraud_bool), group = factor(fraud_bool))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Доход") +
+  ggtitle("Распределение дохода и статуса аккаунта") +
+  theme_bw()
+
+```
+
+```{r}
+correlation <- cor(Base$income, Base$fraud_bool)
+print(correlation)
+```
+Значение корреляции 0,04507917 можно считать очень маленькой корреляцией. Как правило, чем ближе коэффициент корреляции к 0, тем слабее связь между двумя переменными.
+
+```{r}
+
+ggplot(Base, aes(x = name_email_similarity, y = after_stat(density), fill = factor(fraud_bool))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  xlab("Показатель схожести") +
+  ylab("Плотность") +
+  ggtitle("Плотность показателя сходства имени и почти в зависимости от статуса аккаунта") +
+  theme_bw()
+
+```
+
+На графике показано распределение переменной "name_email_similarity" с разбивкой на переменную "fraud_bool". Ось X представляет значения «name_email_similarity», а ось Y представляет плотность каждого значения. График разбит на переменную «fraud_bool», при этом кривые плотности для значений «fraud_bool» 0 и 1 накладываются красным и зеленым цветом соответственно.
+
+Как правило, график плотности представляет собой распределение переменной на гладкой кривой, при этом высота кривой указывает на плотность наблюдений. В этом случае график показывает, что существует некоторое разделение между кривыми плотности для значений «fraud_bool» 0 и 1, что позволяет предположить, что может существовать некоторая связь между «name_email_similarity» и вероятностью мошенничества.
+
+```{r}
+correlation <- cor(Base$fraud_bool, Base$name_email_similarity)
+print(correlation)
+```
+Ещё меньше, плохо
+
+```{r}
+
+num_rows_with_neg1 <- sum(Base$prev_address_months_count == -1)
+total_rows <- nrow(Base)
+pct_neg1 <- num_rows_with_neg1 / total_rows * 100
+print(paste0("Процент строк с -1 в name_email_similarity: ", round(pct_neg1, 2), "%"))
+
+```
+
+Убираем, очевидно
+
+```{r}
+
+num_rows_with_neg1 <- sum(Base$current_address_months_count == -1)
+total_rows <- nrow(Base)
+pct_neg1 <- num_rows_with_neg1 / total_rows * 100
+print(paste0("Процент строк с -1 в current_address_months_count: ", round(pct_neg1, 2), "%"))
+
+```
+
+Не так уж и много
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), y = current_address_months_count, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.7) +
+  xlab("Мошеннический аккаунт") +
+  ylab("месяцев по текущему адресу регистрации") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  ggtitle("Зависимость времени по текущему адресу регистрации заявителя и статусу аккаунта")
+
+```
+
+Неожиданные разультаты, кстати. Надеюсь без ошибок.
+
+```{r}
+
+correlation <- cor(Base$fraud_bool, Base$current_address_months_count)
+print(correlation)
+
+```
+Мне кажется я как-то неправильно считаю корреляцию
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), y = customer_age, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ggtitle("Распределение возраста по статусу учетной записи") +
+  ylab("Возраст") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+```
+
+```{r}
+
+correlation <- cor(Base$fraud_bool, Base$customer_age)
+print(correlation)
+
+```
+Ну здесь самая явная корреляция среди всех предыдущих
+
+```{r}
+
+ggplot(Base, aes(x = days_since_request, fill = factor(fraud_bool))) +
+  geom_density(alpha = 0.5) +
+  xlab("Дней с момента запроса") +
+  ylab("Распределение") +
+  ggtitle("Распределение дней с момента запроса по статусу учетной записи") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  scale_x_log10()
+
+```
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), y = days_since_request, fill = factor(fraud_bool))) +
+  geom_violin(trim = FALSE, alpha = 0.5) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Дней с момента запроса") +
+  ggtitle("Распределение дней с момента запроса по статусу учетной записи") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))  +
+  ylim(0, 0.075)
+
+```
+
+```{r}
+
+correlation <- cor(Base$fraud_bool, Base$days_since_request)
+print(correlation)
+
+```
+Вообще нет корреляции. превый на удаление.
+
+Снова не наглядно
+```{r}
+
+ggplot(Base, aes(x = intended_balcon_amount, fill = factor(fraud_bool))) +
+  geom_density(alpha = 0.5, adjust = 2) +
+  xlab("Первоначальный платёж ") +
+  ylab("Плотность") +
+  ggtitle("График плотности первоначальной суммы платежа в зависимости от статуса аккаунта") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) 
+
+```
+```{r}
+correlation <- cor(Base$fraud_bool, Base$intended_balcon_amount)
+print(correlation)
+```
+Маловато
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), fill = payment_type)) +
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Fraudulent Account") +
+  ylab("Proportion") +
+  ggtitle("Proportion of Payment Types by Fraudulent Account Status") +
+  guides(fill = guide_legend(title = "Payment Type"))
+
+```
+Да, вы можете проанализировать корреляцию между двумя категориальными переменными, такими как «fraud_bool» и «payment_type», используя такие методы, как критерий хи-квадрат или V-критерий Крамера.
+
+Критерий хи-квадрат может определить, существует ли значимая связь между двумя категориальными переменными. Он основан на разнице между наблюдаемыми и ожидаемыми частотами в таблице непредвиденных обстоятельств.
+
+V-критерий Крамера похож на критерий хи-квадрат, но он измеряет силу связи между двумя категориальными переменными, а не просто проверяет статистическую значимость.
+
+В R эти тесты можно выполнять с помощью функций «chisq.test» и «assocstats» соответственно, которые являются частью пакета «vcd». Вот пример:
+```{r}
+install.packages("vcd")
+
+```
+
+```{r}
+library(vcd)
+
+# Create a contingency table of fraud_bool and payment_type
+cont_table <- table(Base$fraud_bool, Base$payment_type)
+
+# Perform chi-square test
+chi_sq <- chisq.test(cont_table)
+print(chi_sq)
+
+# Perform Cramer's V test
+cramer_v <- assocstats(cont_table)$cramer
+print(cramer_v)
+
+
+```
+Результаты теста хи-квадрат указывают на то, что существует значительная связь между fraud_bool и payment_type, поскольку p-значение меньше 0,05.
+
+Значение 0,03909402 V Крамера указывает на слабую связь между двумя переменными.
+
+```{r}
+library(ggplot2)
+
+ggplot(Base, aes(x=factor(fraud_bool), y=zip_count_4w, fill=factor(fraud_bool))) +
+  geom_boxplot(alpha=0.5) +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  xlab("Fraudulent Account") +
+  ylab("Количество заявок в пределах одного и того же почтового индекса за последние 4 недели") +
+  ggtitle("Распределение количества почтовых отправлений по статусу учетной записи")
+
+```
+```{r}
+correlation <- cor(Base$fraud_bool, Base$zip_count_4w)
+print(correlation)
+```
+Совсем низкое. на свалку.
+
+```{r}
+
+
+ggplot(data = Base, aes(x = fraud_bool, y = velocity_6h, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ylab("Скорость заявок, поданных за последние 6 часов") +
+  ggtitle("Распределение скорости подачи заявок по статусу учетной записи за 6 часов") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+```
+```{r}
+correlation <- cor(Base$fraud_bool, Base$velocity_6h)
+print(correlation)
+```
+Маловато.
+
+```{r}
+ggplot(data = Base, aes(x = fraud_bool, y = velocity_24h, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ylab("Скорость заявок, поданных за последние 24 часа") +
+  ggtitle("Распределение скорости подачи заявок по статусу учетной записи за 24 часа") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+```
+```{r}
+correlation <- cor(Base$fraud_bool, Base$velocity_24h)
+print(correlation)
+```
+Ещё меньше
+
+```{r}
+ggplot(data = Base, aes(x = fraud_bool, y = velocity_4w, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ylab("Скорость заявок, поданных за последние 4 недели") +
+  ggtitle("Распределение скорости подачи заявок по статусу учетной записи за 4 недели") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+```
+```{r}
+correlation <- cor(Base$fraud_bool, Base$velocity_4w)
+print(correlation)
+```
+Ну ожидалось что-то более грандиозное по всем 3ём столбцам. Ожидания не оправдались скорее на мусорку чем нет.
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), y = bank_branch_count_8w, fill = factor(fraud_bool))) +
+  geom_violin(alpha = 0.5, position = "identity") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Общее количество заявок в выбранном отделении") +
+  ggtitle("Распределение количества заявок по статусу аккаунта за посление 8 недель") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  ylim(0, 75)
+
+
+```
+
+```{r}
+correlation <- cor(Base$fraud_bool, Base$bank_branch_count_8w)
+print(correlation)
+```
+Маловато
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), y = date_of_birth_distinct_emails_4w, fill = factor(fraud_bool))) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_fill_manual(values = c("#999999", "#E69F00")) +
+  labs(x = "Мошеннический аккаунт", y = "Количество") +
+  ggtitle("Количество электронных писем от заявителей с одинаковой датой рождения") +
+  theme_minimal() +
+  ylim(0, 50)
+
+```
+
+```{r}
+correlation <- cor(Base$fraud_bool, Base$date_of_birth_distinct_emails_4w)
+print(correlation)
+```
+Шок, корреляция есть, но она обратная. Возможно так и должно быть.
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), fill = employment_status)) +
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  
+  guides(fill = guide_legend(title = "Статус занятости"))
+
+
+```
+
+```{r}
+library(vcd)
+
+cont_table <- table(Base$fraud_bool, Base$employment_status)
+
+
+chi_sq <- chisq.test(cont_table)
+print(chi_sq)
+
+
+```
+Статистика теста равна X-квадрату = 1572,5, а степени свободы равны 6. Сообщается, что p-значение меньше 2,2e-16, что означает, что тест обнаружил очень значимую связь между двумя переменными.Важно учитывать эти данные при анализе взаимосвязи между двумя переменными.
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), y = credit_risk_score, fill = factor(fraud_bool))) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_fill_manual(values = c("#999999", "#E69F00")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Оценка кредитного риска") +
+  ggtitle("Распределение оценки кредитного риска по статусу аккаунта")
+
+
+```
+
+```{r}
+correlation <- cor(Base$fraud_bool, Base$credit_risk_score)
+print(correlation)
+```
+Какая красота. Наконец-то нормальная зависимость. Точно оставляем!
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(email_is_free))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Тип почты", labels = c("Бесплатная", "Платная")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Типоы электронной почты в зависимости от статуса учетной записи") +
+  theme_minimal()
+
+```
+Тут явная зависимость, что мошеннические аккаунты чаще выбирают платные домены. Странно.
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), fill = housing_status)) +
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Статус жилья в зависимости от статуса аккаунта") +
+  guides(fill = guide_legend(title = "Статус жилья"))
+
+```
+И здесь явная зависимость.
+
+phone_home_valid
+```{r}
+# Create a contingency table
+cont_table <- table(Base$fraud_bool, Base$phone_home_valid)
+
+# Show the contingency table
+cont_table
+
+# Perform a chi-squared test
+chisq.test(cont_table)
+
+```
+и здесь есть зависимость.
+
+```{r}
+# Create a contingency table
+cont_table <- table(Base$fraud_bool, Base$phone_mobile_valid)
+
+# Show the contingency table
+cont_table
+
+# Perform a chi-squared test
+chisq.test(cont_table)
+
+
+```
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(phone_mobile_valid))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), labels = c("Нет", "да")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Доля подтвержденных мобильных телефонов") +
+  guides(fill = guide_legend(title = "Подленность"))
+
+```
+
+```{r}
+
+num_rows_with_neg1 <- sum(Base$bank_months_count == -1)
+total_rows <- nrow(Base)
+pct_neg1 <- num_rows_with_neg1 / total_rows * 100
+print(paste0("Процент строк с -1 в bank_months_count: ", round(pct_neg1, 2), "%"))
+
+```
+bank_months_count над ним надо ещё поработать потенциально неплохая штука.
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), y = bank_months_count)) +
+  geom_boxplot() +
+  xlab("Мошеннический акаунт") +
+  ylab("Возраст банковского счета (месяцы)") +
+  ggtitle("Распределение возраста банковского счета по статусу мошеннического аккаунта")
+
+```
+
+has_other_cards
+
+```{r}
+# Create a contingency table
+cont_table <- table(Base$fraud_bool, Base$has_other_cards)
+
+# Show the contingency table
+cont_table
+
+# Perform a chi-squared test
+chisq.test(cont_table)
+
+```
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(has_other_cards))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Есть ли другие карты от той же компании", labels = c("Нет", "Есть")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Есть ли другие карты от той же компании") +
+  theme_minimal()
+
+```
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), y = proposed_credit_limit, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.5, position = "identity") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Предлагаемый кредитный лимит") +
+  ggtitle("Распределение предлагаемого кредитного лимита по статусу мошеннического аккаунта") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+```
+
+```{r}
+
+correlation <- cor(Base$fraud_bool, Base$proposed_credit_limit)
+print(correlation)
+
+```
+
+Тут явная зависимость 
+
+```{r}
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(foreign_request))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Запрос из другой страны", labels = c("Нет", "Да")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Соотношение запросов из другой страны по статусу аккаунта") +
+  theme_minimal()
+
+```
+
+
+```{r}
+# Create a contingency table
+cont_table <- table(Base$fraud_bool, Base$foreign_request)
+
+# Show the contingency table
+cont_table
+
+# Perform a chi-squared test
+chisq.test(cont_table)
+
+
+```
+Соолношение явно изменилось. Кси квадрат тест это показывает численно.
+
+```{r}
+ggplot(Base, aes(x = factor(source), fill = factor(fraud_bool))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  xlab("Источники") +
+  ylab("Пропорция") +
+  ggtitle("Распределение источников по статусу учетной записи") +
+  theme_minimal()
+
+```
+Нет здесь зависимостей
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), y = session_length_in_minutes, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.5) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Продолжительность сеанса в минутах") +
+  ggtitle("Распределение продолжительности сеанса по статусу учетной записи") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да"))
+
+```
+
+```{r}
+correlation <- cor(Base$fraud_bool, Base$session_length_in_minutes)
+print(correlation)
+```
+Почти нет кореляции. В мусор
+
+```{r}
+ggplot(Base, aes(x = device_os, fill = factor(fraud_bool))) +
+  geom_bar() +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  xlab("Операционная система устройства") +
+  ylab("Количество аккаунтов") +
+  ggtitle("Распределение мошеннических аккаунтов по операционным системам") +
+  theme_minimal()
+
+```
+Ну тут невооруженными глазами видна зависимость.Постараемся оставить
+
+```{r}
+ggplot(Base, aes(x = factor(keep_alive_session), fill = factor(fraud_bool))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  xlab("Сеанс Keep Alive") +
+  ylab("Пропорция") +
+  ggtitle("Доля мошеннических учетных записей в зависимости от настройки сеанса Keep Alive") +
+  theme_minimal()
+
+```
+
+```{r}
+# Create a contingency table
+cont_table <- table(Base$fraud_bool, Base$keep_alive_session)
+
+# Show the contingency table
+cont_table
+
+# Perform a chi-squared test
+chisq.test(cont_table)
+
+```
+Ну тут тоже есть явная зависимость.
+
+```{r}
+ggplot(Base, aes(x = factor(fraud_bool), y = month, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.5) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Месяц") +
+  ggtitle("Распределение месяца по статусу аккаунта") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  theme_minimal()
+
+```
+Вот это точно нужно дорабатывать. Лучше посмотреть на рампределение по каждому месяцу, но их 8! Странно
+
+```{r}
+
+Base <- Base %>%
+  select(-session_length_in_minutes, -source, -velocity_6h, -velocity_24h, 
+         -velocity_4w, -zip_count_4w, -intended_balcon_amount, -days_since_request)
+
+```
+
+
+
