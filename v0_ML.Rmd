@@ -31,12 +31,78 @@ Base = read_csv(
 
 
 set.seed(2023)
-df = Base %>% sample_n(10000)
+df = Base %>% sample_n(1000)
+
 train = df %>% filter(month < 6) %>% select(- month)
 test = df %>% filter(month >= 6) %>% select(- month)
-df = df %>% select(- month)
 
-# TODO: cv and grids
+# df = df %>% select(- month)
+
+```
+
+```{r folds}
+
+# creates folds indices
+create_folds_seq = function(data, n_folds, seed){
+  
+  train_seq = which(data$month < 6)
+  test_seq = which(data$month >= 6)
+  
+  set.seed(seed)
+  shuffled_train_seq = train_seq %>% sample()
+  shuffled_test_seq = test_seq %>% sample()
+  
+  # prop = length(test_seq) / length(train_seq)
+  
+  split_train_seq = shuffled_train_seq %>%
+    split(rep(1:n_folds, length.out = length(shuffled_train_seq))) %>% unname()
+  split_test_seq = shuffled_test_seq %>%
+    split(rep(1:n_folds, length.out = length(shuffled_test_seq))) %>% unname()
+  
+  split_seq =
+    mapply(
+      function(train_seq, test_seq)
+        list(analysis = train_seq, assessment = test_seq),
+      split_train_seq,
+      split_test_seq,
+      SIMPLIFY = FALSE
+      )
+  
+  return(split_seq)
+}
+
+# creates rset-like folds based on indices
+create_folds_rset_type = function(data, n_folds = 5, seed = 2023){
+  
+  rm_out = function (x){
+      x$out_id <- NA
+      x
+    }
+  
+  folds_seq = data %>% create_folds_seq(n_folds, seed)
+  data = data %>% select(- "month")
+
+  split_objs <- purrr::map(
+    folds_seq,
+    make_splits,
+    data = data,
+    class = "vfold_split"
+    )
+  
+  split_objs <- tibble::tibble(
+    splits = split_objs,
+    id = names0(length(split_objs), "Fold")
+    )
+  
+  split_objs$splits <- map(split_objs$splits, rm_out)
+  cv_att <- list(v = n_folds, repeats = 1, strata = NULL,
+                 breaks = n_folds - 1 , pool = 0.1)
+  new_rset(splits = split_objs$splits, ids = split_objs[, 
+    grepl("^id", names(split_objs))], attrib = cv_att, subclass = c("vfold_cv", 
+    "rset"))
+}
+
+cvf = df %>% create_folds_rset_type(n_folds = 2)
 
 ```
 
@@ -49,7 +115,7 @@ get_threshold = function(data, FPR = 0.05){
   thresholds = roc_res$thresholds
   specificities = roc_res$sensitivities
 
-  new = abs(0.05 - (1 - specificities))
+  new = abs(FPR - (1 - specificities))
   
   return(thresholds[which.min(new)])
 }
@@ -69,9 +135,11 @@ get_sensitivity = function(pred_data){
 
 ```
 
-```{r random forest}
+```{r random forest no cv}
 
 #lm_spec = linear_reg() %>% set_engine("lm")
+
+df = df %>% select(- month)
 
 model_recipe =
   recipe(fraud_bool ~ ., data = df) %>% 
@@ -80,7 +148,7 @@ model_recipe =
   step_dummy(all_factor_predictors()) %>% 
   step_pca(all_numeric_predictors())
 
-model_recipe_df = model_recipe %>% prep() %>% juice()
+# model_recipe_df = model_recipe %>% prep() %>% juice()
 
 model_spec = 
   rand_forest() %>%
@@ -99,6 +167,70 @@ pred = wf_trained %>% predict(test, type = "prob") %>% cbind(truth = test$fraud_
 get_sensitivity(pred)
 
 ```
+
+```{r metric}
+
+# DOESN'T WORK :(
+
+sens_at_5_fpr <- function(data, truth, estimate, ...) {
+
+  roc_res = pROC::roc(truth, estimate, quiet = TRUE)
+  thresholds = roc_res$thresholds
+  specificities = roc_res$sensitivities
+
+  new = abs(FPR - (1 - specificities))
+  
+  confusionMatrix(
+    reference = truth,
+    data =
+      ifelse(estimate > thresholds[which.min(new)], "1", "0") %>%
+      factor(c("1", "0")),
+      positive = "1"
+  ) -> confmatrix
+  
+  return(confmatrix$byClass[["Sensitivity"]])
+}
+
+# Use `new_numeric_metric()` to formalize this new metric function
+sens_at_5_fpr <- new_prob_metric(sens_at_5_fpr, "maximize")
+
+```
+
+```{r random forest cv}
+
+df = df %>% select(- month)
+
+model_recipe =
+  recipe(fraud_bool ~ income + customer_age, data = df) %>% 
+  step_zv(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) #%>%
+  step_dummy(all_factor_predictors()) %>% 
+  step_pca(all_numeric_predictors())
+
+# model_recipe_df = model_recipe %>% prep() %>% juice()
+
+model_spec = 
+  rand_forest(
+    mtry = tune(),
+    trees = tune()
+  ) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+wf = workflow() %>% 
+  add_recipe(model_recipe) %>% 
+  add_model(model_spec)
+
+# TODO: metric
+
+wf_tuned = tune_grid(wf, resamples = b, metrics = metric_set(pr_auc))
+wf_tuned %>% show_best()
+
+# table for 1st fold, check fraud_bool in test sample
+# cvf$splits[[1]] %>% assessment() %>% select(fraud_bool) %>% table()
+
+```
+
 
 ```{r interactive cormatrix}
 
