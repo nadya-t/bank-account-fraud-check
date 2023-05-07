@@ -223,7 +223,7 @@ wf = workflow() %>%
 
 # TODO: metric
 
-wf_tuned = tune_grid(wf, resamples = b, metrics = metric_set(pr_auc))
+wf_tuned = tune_grid(wf, resamples = cvf, metrics = metric_set(pr_auc))
 wf_tuned %>% show_best()
 
 # table for 1st fold, check fraud_bool in test sample
