@@ -1,0 +1,145 @@
+---
+title: "v1_ml"
+output: html_document
+date: '2022-06-14'
+---
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tidymodels)
+library(caret)
+library(pROC)
+library(conflicted)
+library(ranger)
+
+conflicted::conflict_prefer_all("readr", losers = c("scales"))
+conflicted::conflicts_prefer(dplyr::filter)
+```
+
+
+```{r}
+id <- "1YRJorJ6F3o3PVwWH6LrbXBgFbT36gg74"
+Base = read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download&confirm=t", id))
+
+data = Base %>% sample_n(100000) %>% select(-session_length_in_minutes, -source, -velocity_6h, -velocity_24h, 
+         -velocity_4w, -zip_count_4w, -intended_balcon_amount, -days_since_request) # чистим данные от ненужных переменных
+
+str(data)
+
+train_up = data %>% filter(month < 6) %>% select(-month)
+train_up$fraud_bool = as.factor(train_up$fraud_bool) # разбиваем в пропорции 5:3 (можно и по-другому сделать)
+
+train_up <- recipe(~., data = train_up) %>%
+  themis::step_upsample(fraud_bool) %>% 
+  prep(training = train_up, retain = TRUE) %>% 
+  bake(new_data = NULL) # датасет с апсэмплингом
+
+test_up = data %>% filter(month >= 6) %>% select(- month)
+
+model_log = glm(fraud_bool ~ ., data=train_up, family = binomial(link = 'logit'))
+summary(model_log) # строим логистическую регрессию
+
+test_up$pred = predict(model_log, newdata = test_up, type = "response")
+test_up$pred0.96 <- ifelse(test_up$pred > 0.75,1,0) # ставим порог для определения мошеннического аккаунта
+
+ROCfull = roc(response = test_up$fraud_bool, predictor = test_up$pred0.96)
+plot(ROCfull)
+pROC::auc(ROCfull) # рок-аук
+
+caret::confusionMatrix(as.factor(test_up$pred0.96), as.factor(test_up$fraud_bool)) # матрица для тестовой выборки
+
+ggplot(data=test_up) +
+  geom_histogram(aes(x = pred), bins=20) # график распределения вероятностей
+```
+рок-аук = 0.7458, сенситивити = 0.9294, специфисити = 0.562. Выбран порог 0.75, так как при этом значении более половины мошеннических аккаунтов распознаются верно, при этом соотношение TP/FN < 0.1, то есть модель предлагает банить относительно (относительно данной выборки) мало аккаунтов.
+```{r}
+data = Base %>% sample_n(100000) %>% select(-session_length_in_minutes, -source, -velocity_6h, -velocity_24h, 
+         -velocity_4w, -zip_count_4w, -intended_balcon_amount, -days_since_request) # чистим данные от ненужных переменных
+
+train_down = data %>% filter(month < 6) %>% select(- month, -payment_type) # убрал пэймент тайп, потому что в тестовой выборке не встречается АЕ статус и ничего не работает
+train_down$fraud_bool = as.factor(train_down$fraud_bool) # датасет для будущего даунсэмплинга
+
+train_down <- recipe(~., data = train_down) %>%
+  themis::step_downsample(fraud_bool) %>% 
+  prep(training = train_down, retain = TRUE) %>% 
+  bake(new_data = NULL) # делаем даунсэмплинг
+
+test_down = data %>% filter(month >= 6) %>% select(- month, - payment_type)
+test_down$fraud_bool = as.factor(test_down$fraud_bool)
+
+model_log1 = glm(fraud_bool ~ ., data=train_down, family = binomial(link = 'logit'))
+summary(model_log1) # строим логистическую регрессию
+
+test_down$pred = predict(model_log1, newdata = test_down, type = "response")
+test_down$pred0.x <- ifelse(test_down$pred > 0.75,1,0) # ставим порог для определения мошеннического аккаунта
+
+ROCfull = roc(response = test_down$fraud_bool, predictor = test_down$pred0.x)
+plot(ROCfull)
+pROC::auc(ROCfull) # рок-аук
+caret::confusionMatrix(as.factor(test_down$pred0.x), as.factor(test_down$fraud_bool)) # матрица для тестовой выборки
+
+ggplot(data=test_down) +
+  geom_histogram(aes(x = pred), bins=20) # распределение вероятностей по тестовой выборке
+```
+Модель с даунсэмплингом лучше предсказывает мошеннические аккаунты (TP/FP, однако чуть ниже сенситивити), но и предлагает блокировать больше не-мошеннических аккаунтов. Используем модель с апсэмплингом.
+```{r}
+library(xgboost) # библиотека для бустинга
+
+train1 = data %>% filter(month < 4) %>% select(- month)
+train1$fraud_bool = as.factor(train1$fraud_bool)
+
+test1 = data %>% filter(month > 4) %>% select(- month)
+test1$fraud_bool = as.factor(test1$fraud_bool) # разбиение на тренировочную и тестовую выборки
+
+xgb = boost_tree(mode = "classification") %>%
+    set_engine("xgboost") %>% 
+    fit(fraud_bool ~., data = train_up) # модель бустинга для апсэмплинга
+
+train1$predTrain.xgb = predict(xgb, train1)
+test1$predTest.xgb = predict(xgb, test1) # добавляем предсказания в датасеты
+
+
+accuracyTrain.xgb =     
+    accuracy_vec(train1$fraud_bool, train1$predTrain.xgb$.pred_class)
+
+accuracyTest.xgb = 
+    accuracy_vec(test1$fraud_bool, test1$predTest.xgb$.pred_class)
+
+accuracyTrain.xgb
+accuracyTest.xgb # точность для обоих случаев
+confusionMatrix(as.factor(train1$predTrain.xgb$.pred_class), train1$fraud_bool)
+confusionMatrix(as.factor(test1$predTest.xgb$.pred_class), test1$fraud_bool) # матрицы для обоих случаев
+```
+Пробовал для построения модели обычную тренировочную выборку, апсэмплинг и даунсэмплинг. Апсэмплинг оказался самым применимым (выше отношение TP/FP).
+
+```{r}
+library(baguette) # библиотека для бэггинга
+
+train2 = data %>% filter(month < 4) %>% select(- month)
+train2$fraud_bool = as.factor(train1$fraud_bool) 
+
+test2 = data %>% filter(month > 4) %>% select(- month)
+test2$fraud_bool = as.factor(test1$fraud_bool) # разбиение на тестовую и тренироввочную выборки
+
+bag = bag_tree(mode = "classification") %>%
+    fit(fraud_bool~., data = train_up) # строим модель для апсэмплинга
+
+train2$predTrain.bag = predict(bag, train2)
+test2$predTest.bag = predict(bag, test2) # добавляем предсказания в датасеты
+
+accuracyTrain.bag = 
+     accuracy_vec(train2$fraud_bool, train2$predTrain.bag$.pred_class)
+
+accuracyTest.bag = 
+    accuracy_vec(test2$fraud_bool, test2$predTest.bag$.pred_class)
+
+accuracyTrain.bag
+accuracyTest.bag
+
+confusionMatrix(as.factor(train2$predTrain.bag$.pred_class), train2$fraud_bool)
+confusionMatrix(as.factor(test2$predTest.bag$.pred_class), test2$fraud_bool) # матрицы для обоих датасетов
+```
+Бэггинг показывает высокие значения sensitivity и accuracy для тренировочной выборки, но плохие (особенно ensitivity) для тестовой -- эта модель не годится. При обучении на обычной тренировочной выборке и даунсэмплинге результаты примерно такие же или хуже. Берем бустинг.
+```
