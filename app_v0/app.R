@@ -2,7 +2,6 @@ library(shiny)
 library(shinyjs)
 library(dplyr)
 
-# Датасет и модель
 id <- 1:100
 income_y <- runif(100, 0, 1000)
 months <- sample(1:60, 100, replace = TRUE)
@@ -13,7 +12,6 @@ data <- data.frame(id, income_y, months, age, risk, is_fraud)
 
 model <- glm(is_fraud ~ . -id, data = data, family = binomial)
 
-# Интерфейс
 ui <- fluidPage(
   useShinyjs(),
   titlePanel("id / info"),
@@ -40,19 +38,13 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   observeEvent(c(input$id_submit, input$info_submit), {
-    
-    # Смотрим по ID
     if (input$buttons == 'id' && input$id_input != "") {
       id <- as.integer(input$id_input)
       validate(
-        #Почему-то не видно вывода
         need(id %in% data$id, "Неверный id")
       )
       user_data <- data.frame(data[data$id == id,])
-    } 
-    
-    # Смотрим по введенным параметрам
-    else if (input$buttons == 'info' && input$income_y_input != "" &&
+    } else if (input$buttons == 'info' && input$income_y_input != "" &&
                input$months_input != "" && !is.null(input$age_input) &&
                input$risk_input != "") {
       
@@ -62,7 +54,6 @@ server <- function(input, output, session) {
       risk <- as.integer(input$risk_input)
       
       validate(
-        # Не видно вывода тоже
         need(income_y >= 0 && income_y <= 1000, "Недопустимый income_y"),
         need(months >= 1 && months <= 60, "Недопустимый months"),
         need(age %in% seq(10, 100, by = 10), "Недопустимый age"),
@@ -77,7 +68,6 @@ server <- function(input, output, session) {
                               is_fraud = 1)
     }
     
-    # Предсказание, вывод
     if (exists("user_data")) {
       prediction <- predict(model, newdata = user_data, type = "response")
       output$prediction <- renderText(ifelse(prediction > 0.5, "yes", "no"))
