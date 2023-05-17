@@ -1,5 +1,4 @@
 library(shiny)
-library(shinyjs)
 library(dplyr)
 library(DT)
 
@@ -14,7 +13,6 @@ data <- data.frame(id, income_y, months, age, risk, is_fraud)
 model <- glm(is_fraud ~ . -id, data = data, family = binomial)
 
 ui <- fluidPage(
-  useShinyjs(),
   titlePanel("id / info"),
   radioButtons("buttons", label = NULL, choices = c("id", "info"), selected = NULL, inline = TRUE),
   
@@ -34,6 +32,7 @@ ui <- fluidPage(
     h3(textOutput("prediction"), align = "center")
   )
 )
+
 
 server <- function(input, output, session) {
   
