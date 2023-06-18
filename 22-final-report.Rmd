@@ -1,0 +1,1003 @@
+---
+title: "Итоговый проект"
+author: "Группа 22"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+### Идея
+
+**Тип проекта:** рекомендательный
+
+**Данные:** датасет с kaggle, доступный по ссылке https://www.kaggle.com/datasets/sgpjesus/bank-account-fraud-dataset-neurips-2022
+
+Наше приложение создано, чтобы помочь банкам определять, являются ли банковские аккаунты их клиентов мошенническими или нет. На основании определенной информации о клиенте наша система рекомендует банкам присмотреться к подозрительным аккаунтам и расчитывает вероятность того, что аккаунт мошеннический.
+
+На базе модифицированного датасета с kaggle, ссылка на который приведена выше, мы с помощью логистической регрессии, бустинга и бэггинга построили несколько моделей. Взяв за основу лучшую из полученных моделей, мы реализовали приложение, развернутое на shinyapps, которое при указании 22 характеристик банковского аккаунта расчитывает вероятность мошенничества. 
+
+### Распределение ролей
+
+1. Алкаев Владислав Алексеевич: машинное обучение, выбор лучшей модели
+2. Василиженко	Александр Александрович: машинное обучение, выбор лучшей модели
+3. Иванова	Анна Тимуровна: разработка, реализация и развертывание приложения
+4. Кривоусова Арина Андреевна: разработка, реализация и развертывание приложения
+5. Титова Надежда Дмитриевна: разработка, реализация и развертывание приложения
+6. Трубицин Семен Сергеевич: предобработка данных, разведочный анализ
+
+### Предобработка
+
+Данные у нас уже были, и самое главное, что они были уже в зашифрованном виде. Это с одной стороны успростило предобработку, а с другой стороны усложнило EDA. В предобработке мы просто удалили все строки с пропущенными значениями. EDA включал в себя визуальный анализ данных по всем 32 переменным с помощью графиков плотности распределения, коробок с усами, и гистограмм. Также был проведён корреляционный анализ, а для катигориальных переменных мы использовали метод хи квадрат.
+
+```{r eval = F}
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(plyr)
+library(purrr)
+library(nlme)
+library(lme4)
+library(survival)
+library(vcd)
+
+
+library(readr)
+setwd("C:/Users/Zas10/Documents/project")
+Base <- read_csv("Base.csv")
+
+table(Base$device_fraud_count)
+
+Base <- subset(Base, select = -device_fraud_count)
+
+View(Base)
+
+ggplot(Base, aes(x = factor(fraud_bool), y = income, fill = factor(fraud_bool), group = factor(fraud_bool))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Доход") +
+  ggtitle("Распределение дохода и статуса аккаунта") +
+  theme_bw()
+
+correlation <- cor(Base$income, Base$fraud_bool)
+print(correlation)
+
+
+#Значение корреляции 0,04507917 можно считать очень маленькой корреляцией. Как правило, чем ближе коэффициент корреляции к 0, тем слабее связь между двумя переменными.
+
+
+ggplot(Base, aes(x = name_email_similarity, y = after_stat(density), fill = factor(fraud_bool))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  xlab("Показатель схожести") +
+  ylab("Плотность") +
+  ggtitle("Плотность показателя сходства имени и почти в зависимости от статуса аккаунта") +
+  theme_bw()
+
+
+
+#На графике показано распределение переменной "name_email_similarity" с разбивкой на переменную "fraud_bool". Ось X представляет значения «name_email_similarity», а ось Y представляет плотность каждого значения. График разбит на переменную «fraud_bool», при этом кривые плотности для значений «fraud_bool» 0 и 1 накладываются красным и зеленым цветом соответственно.
+
+#Как правило, график плотности представляет собой распределение переменной на гладкой кривой, при этом высота кривой указывает на плотность наблюдений. В этом случае график показывает, что существует некоторое разделение между кривыми плотности для значений «fraud_bool» 0 и 1, что позволяет предположить, что может существовать некоторая связь между «name_email_similarity» и вероятностью мошенничества.
+
+correlation <- cor(Base$fraud_bool, Base$name_email_similarity)
+print(correlation)
+
+
+#Ещё меньше, плохо
+
+
+num_rows_with_neg1 <- sum(Base$prev_address_months_count == -1)
+total_rows <- nrow(Base)
+pct_neg1 <- num_rows_with_neg1 / total_rows * 100
+print(paste0("Процент строк с -1 в name_email_similarity: ", round(pct_neg1, 2), "%"))
+
+
+
+#Убираем, очевидно
+
+
+
+
+num_rows_with_neg1 <- sum(Base$current_address_months_count == -1)
+total_rows <- nrow(Base)
+pct_neg1 <- num_rows_with_neg1 / total_rows * 100
+print(paste0("Процент строк с -1 в current_address_months_count: ", round(pct_neg1, 2), "%"))
+
+
+#Не так уж и много
+
+
+
+
+data_subset <- Base[Base$current_address_months_count != -1,]
+
+
+ggplot(data = data_subset, aes(x = factor(fraud_bool), y = current_address_months_count)) + 
+  geom_jitter(alpha = 0.1) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Месяцев по текущему зарегистрированному адресу заявителя") +
+  ggtitle("Связь между временем по текущему зарегистрированному адресу заявителя и статусом аккаунта")
+
+
+
+ggplot(Base, aes(x = factor(fraud_bool), y = current_address_months_count, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.7) +
+  xlab("Мошеннический аккаунт") +
+  ylab("месяцев по текущему адресу регистрации") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  ggtitle("Зависимость времени по текущему адресу регистрации заявителя и статусу аккаунта")
+
+
+#Неожиданные разультаты, кстати
+
+
+correlation <- cor(Base$fraud_bool, Base$current_address_months_count)
+print(correlation)
+
+ggplot(Base, aes(x = factor(fraud_bool), y = customer_age, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ggtitle("Распределение возраста по статусу учетной записи") +
+  ylab("Возраст") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+
+correlation <- cor(Base$fraud_bool, Base$customer_age)
+print(correlation)
+
+
+#Ну здесь самая явная корреляция среди всех предыдущих
+
+
+ggplot(Base, aes(x = days_since_request, fill = factor(fraud_bool))) +
+  geom_density(alpha = 0.5) +
+  xlab("Дней с момента запроса") +
+  ylab("Распределение") +
+  ggtitle("Распределение дней с момента запроса по статусу учетной записи") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  scale_x_log10()
+
+
+
+ggplot(Base, aes(x = factor(fraud_bool), y = days_since_request, fill = factor(fraud_bool))) +
+  geom_violin(trim = FALSE, alpha = 0.5) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Дней с момента запроса") +
+  ggtitle("Распределение дней с момента запроса по статусу учетной записи") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))  +
+  ylim(0, 0.075)
+
+
+correlation <- cor(Base$fraud_bool, Base$days_since_request)
+print(correlation)
+
+
+#Вообще нет корреляции. превый на удаление.
+
+#Снова не наглядно
+
+
+ggplot(Base, aes(x = intended_balcon_amount, fill = factor(fraud_bool))) +
+  geom_density(alpha = 0.5, adjust = 2) +
+  xlab("Первоначальный платёж ") +
+  ylab("Плотность") +
+  ggtitle("График плотности первоначальной суммы платежа в зависимости от статуса аккаунта") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) 
+
+
+correlation <- cor(Base$fraud_bool, Base$intended_balcon_amount)
+print(correlation)
+
+
+#Маловато
+
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = payment_type)) +
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Fraudulent Account") +
+  ylab("Proportion") +
+  ggtitle("Proportion of Payment Types by Fraudulent Account Status") +
+  guides(fill = guide_legend(title = "Payment Type"))
+
+
+
+#Критерий хи-квадрат может определить, существует ли значимая связь между двумя категориальными переменными. Он основан на разнице между наблюдаемыми и ожидаемыми частотами в таблице непредвиденных обстоятельств.
+
+#критерий Крамера похож на критерий хи-квадрат, но он измеряет силу связи между двумя категориальными переменными, а не просто проверяет статистическую значимость.
+
+
+
+install.packages("vcd")
+
+
+
+
+
+cont_table <- table(Base$fraud_bool, Base$payment_type)
+
+
+chi_sq <- chisq.test(cont_table)
+print(chi_sq)
+
+
+cramer_v <- assocstats(cont_table)$cramer
+print(cramer_v)
+
+
+#Результаты теста хи-квадрат указывают на то, что существует значительная связь между fraud_bool и payment_type, поскольку p-значение меньше 0,05.
+
+#Значение 0,03909402 V Крамера указывает на слабую связь между двумя переменными.
+
+
+ggplot(Base, aes(x=factor(fraud_bool), y=zip_count_4w, fill=factor(fraud_bool))) +
+  geom_boxplot(alpha=0.5) +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  xlab("Fraudulent Account") +
+  ylab("Количество заявок в пределах одного и того же почтового индекса за последние 4 недели") +
+  ggtitle("Распределение количества почтовых отправлений по статусу учетной записи")
+
+
+correlation <- cor(Base$fraud_bool, Base$zip_count_4w)
+print(correlation)
+
+
+#Совсем низкое. на свалку.
+
+
+ggplot(data = Base, aes(x = fraud_bool, y = velocity_6h, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ylab("Скорость заявок, поданных за последние 6 часов") +
+  ggtitle("Распределение скорости подачи заявок по статусу учетной записи за 6 часов") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+
+correlation <- cor(Base$fraud_bool, Base$velocity_6h)
+print(correlation)
+
+
+#Маловато.
+
+
+ggplot(data = Base, aes(x = fraud_bool, y = velocity_24h, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ylab("Скорость заявок, поданных за последние 24 часа") +
+  ggtitle("Распределение скорости подачи заявок по статусу учетной записи за 24 часа") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+correlation <- cor(Base$fraud_bool, Base$velocity_24h)
+print(correlation)
+
+
+#Ещё меньше
+
+
+ggplot(data = Base, aes(x = fraud_bool, y = velocity_4w, fill = factor(fraud_bool))) +
+  geom_boxplot() +
+  xlab("Мошеннический аккаунт") +
+  ylab("Скорость заявок, поданных за последние 4 недели") +
+  ggtitle("Распределение скорости подачи заявок по статусу учетной записи за 4 недели") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+correlation <- cor(Base$fraud_bool, Base$velocity_4w)
+print(correlation)
+
+
+#Ну ожидалось что-то более грандиозное по всем 3ём столбцам. Ожидания не оправдались скорее на мусорку чем нет.
+
+
+ggplot(Base, aes(x = factor(fraud_bool), y = bank_branch_count_8w, fill = factor(fraud_bool))) +
+  geom_violin(alpha = 0.5, position = "identity") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Общее количество заявок в выбранном отделении") +
+  ggtitle("Распределение количества заявок по статусу аккаунта за посление 8 недель") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да")) +
+  ylim(0, 75)
+
+
+correlation <- cor(Base$fraud_bool, Base$bank_branch_count_8w)
+print(correlation)
+
+
+#Маловато
+
+
+ggplot(Base, aes(x = factor(fraud_bool), y = date_of_birth_distinct_emails_4w, fill = factor(fraud_bool))) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_fill_manual(values = c("#999999", "#E69F00")) +
+  labs(x = "Мошеннический аккаунт", y = "Количество") +
+  ggtitle("Количество электронных писем от заявителей с одинаковой датой рождения") +
+  theme_minimal() +
+  ylim(0, 50)
+
+
+correlation <- cor(Base$fraud_bool, Base$date_of_birth_distinct_emails_4w)
+print(correlation)
+
+
+#Шок, корреляция есть, но она обратная. Возможно так и должно быть.
+
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = employment_status)) +
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  
+  guides(fill = guide_legend(title = "Статус занятости"))
+
+
+
+
+cont_table <- table(Base$fraud_bool, Base$employment_status)
+
+
+chi_sq <- chisq.test(cont_table)
+print(chi_sq)
+
+
+
+
+#Статистика теста равна X-квадрату = 1572,5, а степени свободы равны 6. Сообщается, что p-значение меньше 2,2e-16, что означает, что тест обнаружил очень значимую связь между двумя переменными.
+
+
+ggplot(Base, aes(x = factor(fraud_bool), y = credit_risk_score, fill = factor(fraud_bool))) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_fill_manual(values = c("#999999", "#E69F00")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Оценка кредитного риска") +
+  ggtitle("Распределение оценки кредитного риска по статусу аккаунта")
+
+
+correlation <- cor(Base$fraud_bool, Base$credit_risk_score)
+print(correlation)
+
+
+#Какая красота. Наконец-то нормальная зависимость. Точно оставляем!
+
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(email_is_free))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Тип почты", labels = c("Бесплатная", "Платная")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Типоы электронной почты в зависимости от статуса учетной записи") +
+  theme_minimal()
+
+
+#Тут явная зависимость.
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = housing_status)) +
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Статус жилья в зависимости от статуса аккаунта") +
+  guides(fill = guide_legend(title = "Статус жилья"))
+
+
+
+#И здесь явная зависимость.
+
+#phone_home_valid
+
+
+cont_table <- table(Base$fraud_bool, Base$phone_home_valid)
+
+cont_table
+
+chisq.test(cont_table)
+
+#и здесь есть зависимость.
+
+
+cont_table <- table(Base$fraud_bool, Base$phone_mobile_valid)
+
+cont_table
+
+chisq.test(cont_table)
+
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(phone_mobile_valid))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), labels = c("Нет", "да")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Доля подтвержденных мобильных телефонов") +
+  guides(fill = guide_legend(title = "Подленность"))
+
+
+num_rows_with_neg1 <- sum(Base$bank_months_count == -1)
+total_rows <- nrow(Base)
+pct_neg1 <- num_rows_with_neg1 / total_rows * 100
+print(paste0("Процент строк с -1 в bank_months_count: ", round(pct_neg1, 2), "%"))
+
+
+
+#bank_months_count над ним надо ещё поработать, потенциально неплохая штука.
+
+
+ggplot(Base, aes(x = factor(fraud_bool), y = bank_months_count)) +
+  geom_boxplot() +
+  xlab("Мошеннический акаунт") +
+  ylab("Возраст банковского счета (месяцы)") +
+  ggtitle("Распределение возраста банковского счета по статусу мошеннического аккаунта")
+
+
+#has_other_cards
+
+
+cont_table <- table(Base$fraud_bool, Base$has_other_cards)
+
+cont_table
+
+chisq.test(cont_table)
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(has_other_cards))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Есть ли другие карты от той же компании", labels = c("Нет", "Есть")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Есть ли другие карты от той же компании") +
+  theme_minimal()
+
+ggplot(Base, aes(x = factor(fraud_bool), y = proposed_credit_limit, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.5, position = "identity") +
+  xlab("Мошеннический аккаунт") +
+  ylab("Предлагаемый кредитный лимит") +
+  ggtitle("Распределение предлагаемого кредитного лимита по статусу мошеннического аккаунта") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический", labels = c("Нет", "Да"))
+
+correlation <- cor(Base$fraud_bool, Base$proposed_credit_limit)
+print(correlation)
+
+
+#Тут явная зависимость
+
+
+ggplot(Base, aes(x = factor(fraud_bool), fill = factor(foreign_request))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Запрос из другой страны", labels = c("Нет", "Да")) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Пропорция") +
+  ggtitle("Соотношение запросов из другой страны по статусу аккаунта") +
+  theme_minimal()
+
+cont_table <- table(Base$fraud_bool, Base$foreign_request)
+
+cont_table
+
+chisq.test(cont_table)
+
+
+
+#Сооnношение явно изменилось. Кси квадрат тест это показывает численно.
+
+
+ggplot(Base, aes(x = factor(source), fill = factor(fraud_bool))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  xlab("Источники") +
+  ylab("Пропорция") +
+  ggtitle("Распределение источников по статусу учетной записи") +
+  theme_minimal()
+
+#Нет здесь зависимостей
+
+ggplot(Base, aes(x = factor(fraud_bool), y = session_length_in_minutes, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.5) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Продолжительность сеанса в минутах") +
+  ggtitle("Распределение продолжительности сеанса по статусу учетной записи") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да"))
+
+correlation <- cor(Base$fraud_bool, Base$session_length_in_minutes)
+print(correlation)
+
+#Почти нет кореляции. В мусор
+
+ggplot(Base, aes(x = device_os, fill = factor(fraud_bool))) +
+  geom_bar() +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  xlab("Операционная система устройства") +
+  ylab("Количество аккаунтов") +
+  ggtitle("Распределение мошеннических аккаунтов по операционным системам") +
+  theme_minimal()
+
+#Ну тут невооруженными глазами видна зависимость.Постараемся оставить
+
+ggplot(Base, aes(x = factor(keep_alive_session), fill = factor(fraud_bool))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  xlab("Сеанс Keep Alive") +
+  ylab("Пропорция") +
+  ggtitle("Доля мошеннических учетных записей в зависимости от настройки сеанса Keep Alive") +
+  theme_minimal()
+
+cont_table <- table(Base$fraud_bool, Base$keep_alive_session)
+
+cont_table
+
+chisq.test(cont_table)
+
+#Ну тут тоже есть явная зависимость.
+
+ggplot(Base, aes(x = factor(fraud_bool), y = month, fill = factor(fraud_bool))) +
+  geom_boxplot(alpha = 0.5) +
+  xlab("Мошеннический аккаунт") +
+  ylab("Месяц") +
+  ggtitle("Распределение месяца по статусу аккаунта") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), name = "Мошеннический аккаунт", labels = c("Нет", "Да")) +
+  theme_minimal()
+
+Base <- Base %>%
+  select(-session_length_in_minutes, -source, -velocity_6h, -velocity_24h, 
+         -velocity_4w, -zip_count_4w, -intended_balcon_amount, -days_since_request)
+
+
+```
+
+### Методы машинного обучения
+
+Для задачи определения, является ли аккаунт мошенническим или нет мы применили два метода машинного обученя: более простой (для "базовой" версии) - логистическую регрессию, и более сложный (для "продвинутой" версии) - бустинг. Также мы рассматривали бэггинг и случайный лес как альтернативу бустингу, однако если бэггинг мы отсеили ввиду меньшей точности (более подробное описание ниже), то случайный лес строился слишком долго (из-за большого объема данных), что усложняло работу над проектом.
+```{r eval = F}
+id <- "1YRJorJ6F3o3PVwWH6LrbXBgFbT36gg74"
+Base = read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download&confirm=t", id))
+
+data = Base %>% sample_n(100000) %>% select(-session_length_in_minutes, -source, -velocity_6h, -velocity_24h, 
+         -velocity_4w, -zip_count_4w, -intended_balcon_amount, -days_since_request) # чистим данные от ненужных переменных
+
+str(data)
+
+train_up = data %>% filter(month < 6) %>% select(-month)
+train_up$fraud_bool = as.factor(train_up$fraud_bool) # разбиваем в пропорции 5:3 (можно и по-другому сделать)
+
+train_up <- recipe(~., data = train_up) %>%
+  themis::step_upsample(fraud_bool) %>% 
+  prep(training = train_up, retain = TRUE) %>% 
+  bake(new_data = NULL) # датасет с апсэмплингом
+
+test_up = data %>% filter(month >= 6) %>% select(- month)
+
+model_log = glm(fraud_bool ~ ., data=train_up, family = binomial(link = 'logit'))
+summary(model_log) # строим логистическую регрессию
+summary(model_log)
+
+test_up$pred = predict(model_log, newdata = test_up, type = "response")
+test_up$pred0.96 <- ifelse(test_up$pred > 0.75,1,0) # ставим порог для определения мошеннического аккаунта
+
+ROCfull = roc(response = test_up$fraud_bool, predictor = test_up$pred0.96)
+plot(ROCfull)
+pROC::auc(ROCfull) # рок-аук
+
+caret::confusionMatrix(as.factor(test_up$pred0.96), as.factor(test_up$fraud_bool)) # матрица для тестовой выборки
+
+ggplot(data=test_up) +
+  geom_histogram(aes(x = pred), bins=20) # график распределения вероятностей
+```
+roc-auc = 0.7458, sensitivity = 0.9294, specificity = 0.562. Выбран порог 0.75, так как при этом значении более половины мошеннических аккаунтов распознаются верно, при этом соотношение TP/FN < 0.1, то есть модель предлагает банить относительно (относительно данной выборки) мало аккаунтов.
+```{r eval = F}
+data = Base %>% sample_n(800000) %>% select(-session_length_in_minutes, -source, -velocity_6h, -velocity_24h, 
+         -velocity_4w, -zip_count_4w, -intended_balcon_amount, -days_since_request) # чистим данные от ненужных переменных
+
+train_down = data %>% filter(month < 6) %>% select(- month, -payment_type) # убрал пэймент тайп, потому что в тестовой выборке не встречается АЕ статус и ничего не работает
+train_down$fraud_bool = as.factor(train_down$fraud_bool) # датасет для будущего даунсэмплинга
+
+train_down <- recipe(~., data = train_down) %>%
+  themis::step_downsample(fraud_bool) %>% 
+  prep(training = train_down, retain = TRUE) %>% 
+  bake(new_data = NULL) # делаем даунсэмплинг
+
+test_down = data %>% filter(month >= 6) %>% select(- month, - payment_type)
+test_down$fraud_bool = as.factor(test_down$fraud_bool)
+
+model_log1 = glm(fraud_bool ~ ., data=train_down, family = binomial(link = 'logit'))
+summary(model_log1) # строим логистическую регрессию
+
+test_down$pred = predict(model_log1, newdata = test_down, type = "response")
+test_down$pred0.x <- ifelse(test_down$pred > 0.75,1,0) # ставим порог для определения мошеннического аккаунта
+
+ROCfull = roc(response = test_down$fraud_bool, predictor = test_down$pred0.x)
+plot(ROCfull)
+pROC::auc(ROCfull) # рок-аук
+caret::confusionMatrix(as.factor(test_down$pred0.x), as.factor(test_down$fraud_bool)) # матрица для тестовой выборки
+
+ggplot(data=test_down) +
+  geom_histogram(aes(x = pred), bins=20) # распределение вероятностей по тестовой выборке
+```
+Также ввиду дисбаланса в изначальной выборке (мошеннических аккаунтов всего 2%) мы решили сравнить сравнить метод апсэмплинга и даунсэмплинга для выборок, чтобы улучшить потенциальную модель. Модель с даунсэмплингом лучше предсказывает мошеннические аккаунты (TP/FP, однако чуть ниже сенситивити), но и предлагает блокировать больше немошеннических аккаунтов. Ввиду этого мы используем модель с апсэмплингом, так как не планируем блокировать большое число аккаунтов честных пользователей.
+```{r eval = F}
+library(xgboost) # библиотека для бустинга
+
+train1 = data %>% filter(month < 4) %>% select(- month)
+train1$fraud_bool = as.factor(train1$fraud_bool)
+
+test1 = data %>% filter(month > 4) %>% select(- month)
+test1$fraud_bool = as.factor(test1$fraud_bool) # разбиение на тренировочную и тестовую выборки
+
+xgb = boost_tree(mode = "classification") %>%
+    set_engine("xgboost") %>% 
+    fit(fraud_bool ~., data = train_up) # модель бустинга для апсэмплинга
+
+train1$predTrain.xgb = predict(xgb, train1)
+test1$predTest.xgb = predict(xgb, test1) # добавляем предсказания в датасеты
+
+
+accuracyTrain.xgb =     
+    accuracy_vec(train1$fraud_bool, train1$predTrain.xgb$.pred_class)
+
+accuracyTest.xgb = 
+    accuracy_vec(test1$fraud_bool, test1$predTest.xgb$.pred_class)
+
+accuracyTrain.xgb
+accuracyTest.xgb # точность для обоих случаев
+confusionMatrix(as.factor(train1$predTrain.xgb$.pred_class), train1$fraud_bool)
+confusionMatrix(as.factor(test1$predTest.xgb$.pred_class), test1$fraud_bool) # матрицы для обоих случаев
+```
+Для построения модели методом бустинга мы попробовали использовать обычную выборку, с апсэмплингом и даунсэмплингом. Апсэмплинг оказался самым применимым (выше отношение TP/FP).
+```{r eval = F}
+library(baguette) # библиотека для бэггинга
+
+train2 = data %>% filter(month < 4) %>% select(- month)
+train2$fraud_bool = as.factor(train1$fraud_bool) 
+
+test2 = data %>% filter(month > 4) %>% select(- month)
+test2$fraud_bool = as.factor(test1$fraud_bool) # разбиение на тестовую и тренироввочную выборки
+
+bag = bag_tree(mode = "classification") %>%
+    fit(fraud_bool~., data = train_up) # строим модель для апсэмплинга
+
+train2$predTrain.bag = predict(bag, train2)
+test2$predTest.bag = predict(bag, test2) # добавляем предсказания в датасеты
+
+accuracyTrain.bag = 
+     accuracy_vec(train2$fraud_bool, train2$predTrain.bag$.pred_class)
+
+accuracyTest.bag = 
+    accuracy_vec(test2$fraud_bool, test2$predTest.bag$.pred_class)
+
+accuracyTrain.bag
+accuracyTest.bag
+
+confusionMatrix(as.factor(train2$predTrain.bag$.pred_class), train2$fraud_bool)
+confusionMatrix(as.factor(test2$predTest.bag$.pred_class), test2$fraud_bool) # матрицы для обоих датасетов
+```
+Бэггинг показывает высокие значения sensitivity и accuracy для тренировочной выборки, но плохие (особенно sensitivity) для тестовой - эта модель не годится. При обучении на обычной тренировочной выборке и даунсэмплинге результаты примерно такие же или хуже. Берем бустинг.
+
+### Архитектура приложения
+
+Мы используем в приложении уже предобработанные данные и уже построенную раннее модель, загружаемую файлом, что позволяет нам существенно сэкономить память и ускорить работу приложения. Мы не сохраняем никаких данных, поскольку работаем с банковской сферой, где особенно ценна конфиденциальность любой информации. 
+
+### Интерфейс
+
+В нашем приложении мы сделали две вкладки, а именно "Ввод данных" и "Результат". Для того, чтобы рассчитать вероятность того, что банковский аккаунт является мошенническим, необходимо ввести информацию о клиенте, заполнив 22 поля с различными характеристиками. Далее необходимо нажать на кнопку "Готово", тогда, переходя на вторую вкладку (вкладку "Результат"), можно увидеть вероятность того, что аккаунт мошеннический, в процентах.
+
+**Входные данные:**
+
+Для того, чтобы рассчитать вероятность мошенничества клиента банка, пользователь должен заполнить следующие поля информации о клиенте: Годовой доход клиента в количественных показателях (значения от 0 до 1); Сходство имени и email (значения от 0 до 1, рассчитать по косинусному расстоянию); Количество месяцев регистрации на предыдущем месте жительства; Количество месяцев регистрации на текущем месте жительства; Возраст клиента; Кредитный тип клиента; Число обращений клиента в выбранное отделение банка за последние 8 недель; Число электронных писем, полученных от заявителей с совпадающей с клиентом датой рождения за последние 4 недели; Тип занятости клиента; Оценка риска заявления клиента, в промежутке от -500 до 500; Бесплатный ли домен электронной почты; Текущий статус проживания клиента; Указан и действителен ли домашний телефон клиента?; Указан и действителен ли мобильный телефон клиента?; Количество месяцев предыдущему аккаунту клиента, если он был (если данных нет или это его первый аккаунт, вводится -1); Наличие у клиента других карт этой же банковской компании; Запрашиваемая клиентом сумму кредита в тысячах; Является ли клиент гражданином другой страны; Операционная система, с которой клиентом был сделан запрос; Остался ли клиент в аккаунте после подачи заявки?; Количество электронных писем, присланных банку с устройства клиента за последние 8 недель; Количество мошеннических обращений, присланных банку с устройства клиента.
+
+**Выходные данные:** Вероятность того, что аккаунт мошеннический, в процентах.
+
+**Скрины интерфейса:**
+
+![](https://sun9-80.userapi.com/impg/d2_SZUzZn_RjEMv_Zfu21jA-cqPAWb7LxJVFxA/dYo3-NddeFc.jpg?size=1919x909&quality=95&sign=7f5b7108e8a90b56dc249c45c64d662e&type=album)
+![](https://sun9-65.userapi.com/impg/X2y0siJYDRW5nvlmEY_RogxwWZMNuAjI5d6v3Q/CfH3VFeFjNs.jpg?size=1919x882&quality=95&sign=07ffcc61bf4cda21c4037556c06837c8&type=album)
+
+**Код интерфейса:**
+
+```{r eval = FALSE}
+library(shiny)
+library(tidymodels)
+library(xgboost)
+ui <- fluidPage(
+  titlePanel("Определение мошеннического банковского аккаунта"),
+  tabsetPanel(
+    tabPanel("Ввод данных",
+             wellPanel(
+               numericInput("income", "Годовой доход клиента в количественных показателях, значения от 0 до 1", value = 1),
+               numericInput("name_email_similarity", "Сходство имени и email, значения от 0 до 1, рассчитать по косинусному расстоянию", value = 1),
+               numericInput("prev_address_months_count", "Количество месяцев регистрации на предыдущем месте жительства", value = 1),
+               numericInput("current_address_months_count", "Количество месяцев регистрации на текущем месте жительства", value = 1),
+               selectInput("customer_age", "Возраст клиента", choices = c("10", "20", "30", "40", "50", "60","70", "80", "90")),
+               selectInput("payment_type", "Кредитный тип клиента", choices = c("AA", "AB", "AC", "AD", "AE")),
+               numericInput("bank_branch_count_8w", "Число обращений клиента в выбранное отделение банка за последние 8 недель", value = 1),
+               numericInput("date_of_birth_distinct_emails_4w", "Число электронных писем, полученных от заявителей с совпадающей с клиентом датой рождения за последние 4 недели", value = 0),
+               selectInput("employment_status", "Тип занятости клиента", choices = c("CA", "CB", "CC", "CD", "CE", "CF", "CG")),
+               numericInput("credit_risk_score", "Оценка риска заявления клиента, в промежутке от -500 до 500", value = 0),
+               checkboxInput("email_is_free", "Домен электронной почты клиента бесплатный?"),
+               selectInput("housing_status", "Текущий статус проживания клиента", choices = c("BA", "BB", "BC", "BD", "BE", "BF", "BG")),
+               checkboxInput("phone_home_valid", "Указан и действителен ли домашний телефон клиента?"),
+               checkboxInput("phone_mobile_valid", "Указан и действителен ли мобильный телефон клиента?"),
+               numericInput("bank_months_count", "Сколько месяцев предыдущему аккаунту клиента, если он был; если данных нет или это его первый аккаунт, введите -1", value = -1),
+               checkboxInput("has_other_cards", "Есть ли у клиента другие карты этой же банковской компании?"),
+               numericInput("proposed_credit_limit", "Запрашиваемая клиентом сумму кредита в тысячах", value = 1),
+               checkboxInput("foreign_request", "Клиент гражданин другой страны?"),
+               selectInput("device_os", "Операционная система, с которой клиентом был сделан запрос", choices = c("windows", "linux", "macintosh", "x11", "other")),
+               checkboxInput("keep_alive_session", "Остался ли клиент в аккаунте после подачи заявки?"),
+               numericInput("device_distinct_emails_8w", "Количество электронных писем, присланных банку с устройства клиента за последние 8 недель", value = 0),
+               numericInput("device_fraud_count", "Количество мошеннических обращений, присланных банку с устройства клиента", value = 0),
+               actionButton("go", "Готово")
+             ),
+             verbatimTextOutput("prediction")),
+    tabPanel("Результат", htmlOutput("info"))
+  )
+)
+
+server <- function(input, output) {
+  prediction <- eventReactive(input$go, {
+    if (input$go > 0) {
+      newdata <- data.frame(income = as.numeric(input$income),
+                            name_email_similarity = as.numeric(input$name_email_similarity),
+                            prev_address_months_count = as.integer(input$prev_address_months_count),
+                            current_address_months_count = as.integer(input$current_address_months_count),
+                            customer_age = as.integer(input$customer_age),
+                            payment_type = as.character(input$payment_type),
+                            bank_branch_count_8w = as.integer(input$bank_branch_count_8w),
+                            date_of_birth_distinct_emails_4w = as.integer(input$date_of_birth_distinct_emails_4w),
+                            employment_status = as.character(input$employment_status),
+                            credit_risk_score = as.integer(input$credit_risk_score),
+                            email_is_free = as.integer(input$email_is_free),
+                            housing_status = as.character(input$housing_status),
+                            phone_home_valid = as.integer(input$phone_home_valid),
+                            phone_mobile_valid = as.integer(input$phone_mobile_valid),
+                            bank_months_count = as.integer(input$bank_months_count),
+                            has_other_cards = as.integer(input$has_other_cards),
+                            proposed_credit_limit = as.integer(input$proposed_credit_limit),
+                            foreign_request = as.integer(input$foreign_request),
+                            device_os = as.character(input$device_os),
+                            keep_alive_session = as.integer(input$keep_alive_session),
+                            device_distinct_emails_8w = as.integer(input$device_distinct_emails_8w),
+                            device_fraud_count = as.integer(input$device_fraud_count),
+                            X = 1)
+      
+      load(url("https://docs.google.com/uc?id=1NF37j5QGD5Nj69MoY3EqyXeA5T2EqFn3&export=download&confirm=t"))
+      pred <- predict(xgb, newdata, type = "raw")
+      
+      return(1-pred)
+    }
+  })
+  output$info <- renderUI({
+    HTML(paste("Вероятность того, что аккаунт мошеннический:", prediction()))
+    
+  })
+  
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+
+### Оценивание / Выводы
+
+Оценивание работы приложения (прежде всего модели в нем) проводилось на основе метрик, таких как ROC AUC, Accuracy, Sensitivity, а также экспертно: рассматривались различные случаи, например, когда данные подозрительные, среднестатистические, выбивающиеся по какому-то из критериев. В целом, модель показывала хорошие результаты, как по метрикам, так и при вводе конкретных данных, выдавая ожидаемые результаты, рассмотренных нами, согласовались с предположениями, что говорит о корректности работы системы.
+
+### Ссылка на приложение
+
+https://team-22.shinyapps.io/project/
+
+### Ответы на вопросы peer review
+
+Вопросы из первого peer review:
+
+**Вопрос: Так как безопасность клиентов - приоритет любого банка, хотелось бы больше услышать про возможные проблемы при работе с конфиденциальными данными: что это за проблемы?**
+
+*Ответ: Наша команда уже работала с конфиденциальными данными, к которым применили методы дифференциальной конфиденциальности (добавление шума) и кодирование признаков, поэтому в данном контексте можно выделить следующие проблемы: утечка доступа к модели может помочь мошенникам найти способ обхода, но так как исходные данные зашифрованы вряд ли это может стать проблемой; атака на модель, то есть вытаскивание данных из обучаемой модели, но так как данные изначально были зашифрованы, то этот процесс можно считать полностью бесполезным, к тому же к самому приложению доступ имеют только банк или финтех организация (по типу тинькофф), поэтому внутри этой структуры шанс на утечку ещё ниже; другие проблемы сложно выделить, потому что мы не храним данные, не шифруем и главное никогда не сталкиваемся с такой необходимостью так как представляем уже готовую модель.*
+
+**Вопрос: Не совсем понятно, как будет реализована функция выбора произвольного количества параметров. - Судя по датасету, там 30+ переменных: будет изначально построено 32 модели или каждый раз будет строиться новая? - Как в таком случае будет решаться проблема качества, ведь для 5 параметров лучший результат может давать модель decision tree, а для 15 - логистическая регрессия? - Как будет решаться проблема переобучения, если банк введет все 30 переменных?**
+
+*Ответ: В процессе работы мы решили отказаться от концепции, когда вводится очень малое число параметров, так как это сильно ухудшает вероятность вычислить мошеннический аккаунт верно. Что касается построения модели на большом числе переменных, то здесь не будет возникать ситуации с переобученностью, потому что модель строится на очень большом количестве данных (тем более с применением методов, устраняющих дисбаланс в выборке).*
+
+**Вопрос: Некоторые переменные в датасете уже являются продуктом предварительной обработки (например, metric of similarity between email and applicant’s name или аnnual income of the applicant in quantiles in range [0, 1]). Нужно ли будет банку считать эти значение отдельно? Если да, то разумно ли включать их в модель?**
+
+*Ответ: Дело в том, что такие данные банк считает уже сегодня исходя из наших данных. То есть на сегодняшний день все 32 столбца с данными - это информация которую может предоставить нам банк. Однако действительно, возможно в России нормативные требования не такие жёсткие и некоторые банки могут не расчитывать такие переменные. Мы работали с имеющимися данными исходя из того, что эти данные у нас будут, и наш корреляционный анализ показал, что эти данные достаточно значимые, чтобы добавить их в модель.*
+
+(схожий вопрос из второго ревью)
+
+**Вопрос: В разделе ввода информации представлено множество полей. Если пользователь не так основательно знаком с входными данными для проекта, то как ему точно ввести все данные для проверки интересующего его аккаунта? Я имею в виду, должен ли сотрудник банка, например, высчитывать косинусное расстояние вручную, чтобы ввести показатель сходства имени и email-a? Или, например, что означает, что количество месяцев проживания не предыдущем месте жительства равно -1 (на текущем 88), но это явно не сильно влияет на показатель мошенничества? Значит ли -1 (как ниже), что исследуемый владелец аккаунта не менял место жительства? Для меня как пользователя далекого от банковского дела (= я не целевая аудитория, конечно) сложно понять, как выбрать все эти показатели.**
+
+*Ответ: Наши основные пользователи – это банки, которые обладают всей необходимой для работы приложения информация, таким образом, пользователи знакомы со всеми входными данными. «-1» как количество месяцев проживания на предыдущем месте жительства означает, что у банка нет этой информации либо у клиента не было предыдущего места жительства, однако даже и такие случаи не мешают нашей модели обнаруживать подозрительные банковские аккаунты, эти показатели также необходимо учитывать для предсказания.* 
+
+**Вопрос: Каким образом пользователи (в данном случае фактические, то есть преподаватели и другие студенты) будут узнавать id клиента, которого хочется проверить при первом сценарии работы приложения? Будет ли какой-то список имеющихся в данных клиентов? Если пользователь решит проверить уже существующего клиента, то результат проверки будет просто взят из столбца с реальным значением, мошенник данный пользователь или нет, или будет выводиться предсказание модели с вероятностью принадлежности человека к тому или иному классу?**
+
+*Ответ: Ответ на данный вопрос был в видео - в итоге мы отказались от идеи предсказания на основе id клиента.*
+
+**Вопрос: В презентации Вы указываете, что пользователи приложения -- это банки и финтех. То есть, как я понимаю, это могут быть различные организации, а не одна конкретная организация. При этом Вы также указываете, что пользователь может ввести ID клиента банка, если он уже есть в датасете. Есть ли смысл вводить такой способ ввода, если ID клиента/счета в каждой организации, скорее всего, будет разным?**
+
+*Ответ: Это действительно так, и в итоге мы отказались от идеи ввода id и последующего предсказания.*
+
+**Вопрос: Как будет реализован интерфейс (приложение на Shiny, другое веб-приложение, HTTP API...)**
+
+*Ответ: приложение на Shiny.*
+
+**Вопрос: В каком виде будут отображаться объяснения? Будет ли это какой-то output функции напрямую из R или он будет как-то оформлен для упрощения понимания пользователем?**
+
+*Ответ: По итогу мы приняли решение, что приложение будет выводить вероятность того, что аккаунт – мошеннический.*
+
+**Вопрос: Я правильно поняла, что использовать систему будут обычные люди, не банки/банковские сотрудники?**
+
+*Ответ: Нет, пользователи – банки.*
+
+**Вопрос: Какие именно параметры вводятся для того, чтобы получить предсказание? Те самые из перечисленных важнейших столбцов? Было бы интересно узнать полный список.**
+
+*Ответ: Полный список параметров, которые необходимо ввести, чтобы получить предсказание сейчас находится в разделе “Интерфейс”.* 
+
+**Вопрос: Также не совсем понятно, какие именно данные нужно ввести, чтобы получить рекомендацию - стоило уделить внимание на эту деталь в презентации.**
+
+*Ответ: Полный список параметров, которые необходимо ввести, чтобы получить предсказание сейчас находится в разделе “Интерфейс”*
+
+**Вопрос: Почему планируется использовать только два метода - логистическую регрессию и бустинг? Кажется, что стоит рассмотреть и другие методы. Например, то же дерево решений, вероятно, может справиться лучше, чем регрессия. Возможно, стоит обратить на это внимание**
+
+*Ответ: во итоговом видео мы подробнее рассказали о том, какие методы мы использовали, и мы действительно рассмотрели не только логистическую регрессию и бустинг*
+
+**Вопрос: Какие дополнительные данные о пользователе могут быть указаны при расширенном сценарии, по которому будет даваться рекомендация?**
+
+*Ответ: В итоге мы решили сделать как раз только расширенный сценарий ввода, а полный список параметров, которые необходимо ввести, чтобы получить предсказание сейчас находится в разделе "Интерфейс".*
+
+**Вопрос: Хотелось бы более четко сформулировать задачу: мы хотим выявлять мошеннические счета или мошеннические транзакции? Это две разные задачи, которые могут решаться по разному**
+
+*Ответ: Мошеннические аккаунты*
+
+**Вопрос: Не сказано про конкретные метрики: тут важно понимать, что данные имеют очень сильный дисбаланс классов, так как мошеннических транзакций или счетов намного меньше, чем немошеннических. Из-за этого очень важно выбрать правильную метрику - Precision/Recall/ROC-AUC**
+
+*Ответ: Для оценки качества моделей мы использовали следующие метрики – ROC-AUC, specificity, sensitivity, отношение TP к FN.*
+
+**Вопрос: Не очень понятно, как это вообще может использоваться. Было бы классно автоматизировать этот продукт, чтобы он на этапе подгрузки новых данных (или обновления старых) выводил подозрительные аккаунты, так как просто вручную пробивать по одному id в рамках банка с большой клиентской базой как-то очень странно. Также наличие всего одного use case как-то печалит**
+
+*Ответ: Это справедливое замечание. Действительно, в случае применения модели в реальных условиях, она скорее всего будет встроена в систему, и доступ к ней будет осуществляться посредством внутренних обращений автоматически, а сотрудники банков уже получать результат для каждого отдельного клиента. Интерфейс в таком случае будет не нужен, но для демонстрации работы на текущем этапе он необходим.*
+
+Примеры, которые хотели проверить:
+
+**Вопрос: Я - банк, и хочу проверить подозрительного клиента. Ему 29 лет, он зарабатывает 100000$ в год, но не трудоустроен. Он женат и без детей. Вызывает подозрение, что клиент предоставил нерабочий номер телефона, а запрос на подключение к банку сделал из Индии (хотя сам банк в США). Более того, клиент никогда раньше не пользовался услугами банка, но запросил максимальный кредитный лимит. Что выдаст рекомендательная система, если я укажу эти данные? Ожидается, что такой клиент с высокой вероятность будет отнесен к категории мошеннических аккаунтов.**
+
+*Ответ: В данном примере, к сожалению, указана лишь малая часть информации об аккаунте. Авторы дополнили пример усредненными данными - полученная вероятность мошенничества 28%.*
+
+**Вопрос: Предположим, мы рассматриваем второй сценарий функционирования приложения. Что будет, если у пользователя значения income = 0.9, возраст 50 лет, продолжительность сессии около 6 минут, предлагаемый кредитный лимит заявителя равен 1500, внутренняя оценка риска выдачи кредита 319, количество электронных писем для заявителей с одинаковой датой рождения за последние 4 недели равняется 3? Определит ли его система как мошенника? Ожидаю, что система определит такого клиента мошенником. В данных есть такой клиент, и он значится как мошенник.**
+
+*Ответ: Для данного аккаунта вероятность мошенничества 89%. Он действительно определяется как мошеннический*
+
+**Вопрос: Если клиент открыл банковский счет, в тот же день на него поступил перевод на $ 1,000,000.00, а сразу после зачисления он обналичивает эти денежные средства или переводит их на другой банковский счет, будет ли такой счет являться мошенническим? Ожидание: мошеннический банковский счет.**
+
+**Вопрос: Что выдаст сервис, если клиент делал 5 переводов в месяц, имеет вклад в банки на сумму больше 100 тыс. и последний раз он заходил в банковский аккаунт неделю назад.**
+
+**Вопрос: Выявит ли система меня, как мошенника, если мой годовой доход в 2 раза меньше годовых расходов по карте? наверное не выявит**
+
+*Ответ: Наша система не учитывает расходы клиента банка и размер его вклада при расчете вероятности его мошенничества.*
+
+**Вопрос: с какой вероятностью человек под id 1 имеет мошеннический аккаунт? а под id 100?**
+
+*Ответ: При работе над проектом мы решили отказаться от расчета вероятности мошенничества по id клиента банка.  Однако если подставлять в полученную систему данные о клиентах, занимающих 1 и 100 строки в исходном датасете, мы получим следующие результаты - id 1: 75%; id 100: 91%. Оба аккаунта в датасете мошеннические.*
+
+**Вопрос: Что будет, если банк введёт параметры высокий кредитный риск и высокий доход? Параметров мало, но опять же неизвестно, какие ещё параметры могут вводиться. Предполагаю, что есть риск того, что данный аккаунт мошеннический?**
+
+*Ответ: Результат очень зависит от того, как будут заполнены другие поля, но при действительно высоком кредитном риске вероятность того, что аккаунт будет определен, как мошеннический, высока.*
+
+**Вопрос: Поскольку авторы не указали примеры данных, с которыми они будут работать, рискну предположить, что будет учитываться информация, например, о верификации номера телефона, возрасте и гендере пользователя. В таком случае, мне хотелось бы проверить гипотезу о том, что пользователь 20-летнего возраста, мужского пола и чей номер телефона не верифицирован, является мошенником. Предположу, что такие факторы, как пол, возраст и верификация номера телефона могут быть значимы для определения мошенника - кажется, что молодые люди в таком возрасте склонны к мошенничеству. Вдобавок, отсутствие верификации номера телефона действительно может указать на риск мошенничества. Поэтому я ожидаю, что вероятность того, что данный пользователь является мошенником, будет высокой.**
+
+*Ответ: Мы действительно использовали переменные, отвечающие за возраст клиента и верифицированность его номера телефона, они правда имеют значение при расчете вероятности мошенничества. Однако в числе прочего мы использовали ещё два десятка переменных, поэтому на основании всего двух не можем судить о том, является ли аккаунт мошенническим. Для возраста 20 лет и не верифицированного номера телефона можно подобрать и такой набор прочих данных, который определит пользователя как мошенника, и набор, дающий альтернативный результат. Мы не использовали такую переменную, как гендер - ее нет в исходном датасете, к тому же, на наш взгляд, пол человека не так уж и влияет на его склонность к мошенничеству.*
+
+**Вопрос: Я бы подобрал такой банковский аккаунт, который точно является надёжным, но при этом содержит много критериев, которые говорят об обратном. Ожидаю, что система отнесёт его в категорию ненадёжных аккаунтов, потому что думаю, что в датасете нет информации о том — надёжный банковский аккаунт или нет**
+
+*Ответ: Да, действительно, в датасете есть немошеннические аккаунты, которые наша система оценивает иначе, но это скорее исключения.*
+
+**Вопрос: Что будет если я месяц транзачил суммами по 100 рублей, а в один день перевел сразу 1 миллион рублей одним переводом в другую страну? Модель должна выявить паттерн сомнительной транзакции с какой-то вероятностью выше среднего. **
+
+**Вопрос: Допустим, у нас есть юзер, который только получает деньги на свой счет и потом сразу переводит их на другой (третий) счёт. Условно в жизни это может быть студент, которому родители отправляют деньги на карту банка, которым он не пользуется, а он их кидает на счёт другого банка. Будет ли это отмечаться подозрительным? Многие скаммеры примерно также работают: принимают деньги на счёт и обналичивают/переводят их дальше. Кажется, что это может вызвать подозрение, но всё зависит от переменных, которые будут использоваться при обучении модели**
+
+*Ответ: Наша система не имеет функционала, позволяющего судить о переводах с банковского счета, в модели не используются связанные с этим переменные.*
+
+Вопросы из второго peer review:
+
+**Вопрос: как на основе корр. анализа исключались переменные, как исключались наблюдения?**
+
+*Ответ: В нашем датасете представлена информация о миллионах аккаунтов, основная характеристика в которых является аккаунт мошенническим или нет. Наша команда рассматривала каждую характеристику и искала зависимость между этими переменными с помощью графика или с помощью нахождения числового значения корреляции и принимали решение. Чаще всего на ящике с усами хорошо видно стоит ли брать переменную или нет, но к тому же мы всегда смотрели как меняется число мошеннических аккаунтов от увеличения или уменьшения переменной. Для категориальной переменной мы применяли другие методы, например хи квадрат.*
+
+**Вопрос: что означают отрицательные значения в разделе "количество месяцев регистрации на предыдущем месте жительства"?**
+
+*Ответ: Отрицательное значение значит, пропущенное значение. *
+
+**Вопрос: Для полного заполнения всех полей ввода потребуется действительно много информации о клиенте. Мы можем работать только с теми аккаунтами, которые уже есть в данных, или можно "привлечь" (или придумать) другие аккаунты и пытаться самостоятельно разобраться, какие значения для каждой переменной стоит ввести во все эти поля ввода? Немного не хватило инструкции по использованию приложения.**
+
+*Ответ: Предполагается, что пользователями приложения являются банки, поэтому у них есть вся необходимая информация об их клиентах. Они могут в обезличенной форме передать данные в модель и получить результат.*
+
+**Вопрос: Очень интересно, все ли переменные из датасета вы решили использовать? Были ли переменные/пункты, которые не являлись статистически значимыми для проверки аккаунта на мошеннический?**
+
+*Ответ: Мы использовали далеко не все переменные. Более подробный ответ по какому принципу они исключались написан выше.* 
+
+**Вопрос: Чтобы воспользоваться приложением, работнику банка потребуется много времени, чтобы ввести всю информацию, тк много вводных данных, но если точечно проверять определенные подозрительные аккаунты, то кажется довольно полезно. А что делать, если у пользователя новый аккаунт в банке, как понять, что он мошенник?**
+
+*Ответ: В таком случае, скорее всего нет возможности утверждать является ли аккаунт мошенническим. Необходима определенная информация об аккаунте, чтобы сделать какой-либо прогноз в рамках модели.*
+
+**Вопрос: Хотелось бы больше узнать про факторы используемые в системе, их значение и влияние на результат. Также хотелось бы узнать про результаты EDA.**
+
+*Ответ: Более подробный ответ написан выше, но если коротко, то мы использовали визуальный анализ, корреляционный анализ данных. Все строки с пустыми значениями (-1) удалялись. Для категориальных переменных использовался метод хи квадрат.*
+
+**Вопрос: Некоторые переменные непонятны обычному пользователю. Почему "возраст клиента" идёт с шагом 10?**
+**Вопрос: Так и задумывалось, что возраст клиента, который можно выбрать кратен 10?**
+
+*Ответ: Наша команда работала с уже зашифрованными данными, и конечно никакой проблемы нет, чтобы обозначить возраст 20-29 как 20. Наш корреляционный анализ показал явную зависимость. Если бы у нас была задача зашифровать данные, уверен, мы поступили бы так же.*
+
+**Вопрос: Мне бы хотелось узнать больше о том, как они подошли к решению проблемы работы с конфиденциальными данными при разработке своих моделей. Мне также было бы интересно увидеть более подробное объяснение конкретных использованных методов машинного обучения, таких как логистическая регрессия и бустинг, и почему они были выбраны.**
+
+*Ответ: Для обучения модель использовала обезличенные данные, которые подверглись определенной обработке, чтобы сделать невозможным идентификацию пользователей. Подробнее можно почитать в соответствующей статье (раздел A3). Приложение никак не сохраняет вводимые данные, поэтому вопросы конфиденциальности данных скорее лежат на банках, которые будут использовать эту систему. Конкретные методы ML, а также основания для выбора были нами описаны в видео-отчете в том числе. А также в данном отчете этому посвящен отдельный раздел.*
+
+**Вопрос: У меня есть вопрос об интерпретируемости результатов модели, особенно в случаях, когда она выявляет потенциальное мошенничество. Как она представляет эти результаты пользователю (например, банку), и как он может использовать эту информацию для принятия соответствующих мер?**
+
+*Ответ: Модель выводит вероятность того, что аккаунт является мошенническим. Эта информация может быть использована для отказа в заявке клиента на различные банковские услуги, а также послужить поводом для детальной проверки аккаунта.*
+
+**Вопрос: Мне было бы интересно узнать больше о том, как модель была обучена предсказывать мошеннические действия. В частности, я хотел бы увидеть учебное пособие или подробное объяснение того, как команда работала с потенциально несбалансированными данными (поскольку мошеннические счета обычно встречаются реже) и как они решали проблемы переподгонки или недоподгонки в своей модели.**
+
+*Ответ: Основным решением проблемы несбалансированности выборки стал upsampling, с помощью которого вес мошеннических наблюдений вырос, а модель больше не стремилась записывать все аккаунты в НЕ мошеннические.*
+
+**Вопрос: Один из вопросов, который у меня возник, касается устойчивости модели к новым или развивающимся формам мошеннической деятельности. Разработана ли модель таким образом, чтобы адаптироваться к этим изменениям, или же она потребует значительного переобучения?**
+
+*Ответ: Не совсем понятно, о каких именно “новых формах” речь. Поскольку данные достаточно свежие, предполагается, что они актуальны и переобучать модель нет необходимости.*
+
+**Вопрос: Я бы хотел посмотреть подробнее, как реализованы методы предсказания, а именно параметры моделей регрессии, а также оценка их работы**
+
+*Ответ: Обо всем этом можно узнать в разделе “Методы машинного обучения” немного выше.*
+
+Примеры, которые хотели проверить:
+
+**Вопрос: хочу проверить себя как клиента банка. Ожидаемый результат: 5% мошенник**
+
+*Ответ: Поскольку мы не имеем информации о человеке, задавшем вопрос, мы не можем вычислить вероятность того, что он мошенник.*
+
+**Вопрос: На текущем этапе не все поля для ввода оказались для меня ясными (например, косинусное расстояние я не могу в уме быстро определить), но я попытаюсь привести пример по всем критериям наугад)). Доход 0,5, сходство 0,4, месяцы на предыдущем 12, на текущем 12, возраст 24, кредитный тип (что бы это ни значило) АА, обращения 1, число писем 1, занятость СА, риск 12, домен бесплатный, нет галочек про номера, предыдущему аккаунту 6 мес, карты есть, сумма кредита 1500 (полтора миллиона   1500 000), нет галочки гражданин др страны,  windows, вышел, 1, 0. Я ожидаю, что такой клиент будет где-то на грани между мошенником и нет, но интересно, в какую сторону будет уклон) **
+
+*Ответ: Для описанного клиента вероятность мошенничества всего 2%, ожидания не подтвердились.*
+
+**Вопрос: оставить по умолчанию все кроме последнего пункта про мошеннические обращения с устройства клиента - там поставить например 10. Ожидание: аккаунт мошеннический с вероятностью >50%**
+
+*Ответ: В нашей системе нет понятия “по умолчанию”. Если же заполнять поля средними/наиболее популярными значениями, а в последнем пункте указать 10, мы получим вероятность мошенничества. Для такого клиента вероятность мошенничества 26%, но мы не считаем этот пример релевантным - все-таки усредненные данные не дают буквально ничего, а для модели важны конкретные сочетания.*
+
+**Вопрос: Если есть подозрение, что аккаунт пользователя мошеннический, а пользователь переехал в новый город, окончив школу (доход маленький/нулевой, новая регистрация по месту жительства, раньше обслуживался в другом банке), будет ли система рассматривать его как мошенника? Ожидание: 20% что мошенник **
+
+*Ответ: Для такого клиента получаемая вероятность мошенничества всего 3%.*
+
+**Вопрос: Сложно придумать пример для системы детекта фрода, но например такие: попробовать сильно завысить пару факторов (например несовпадение емейла с именем и количество денег на счетах), так что это не будет похоже не мошенника для человека. Ожидание: Система не должна отдавать высокую вероятность фрода из-за перекоса пары факторов, такое часто встречается в профилях реальных пользователей и не спровоцирует детект фрода при ручной проверке, система должна отрабатывать такие кейсы адекватно (что по оценкам команды и происходит)**
+
+*Ответ: Мы воспроизвели клиента с вполне нормальными, средними показателями по всем характеристикам, но аномально завысили запрашиваемую сумму кредита и доход клиента, а также ввели слишком маленькую оценку совпадения имени и емейла - 0,05. Полученная вероятность мошенничества - 4%, система отработала кейс адекватно.*
+
+**Вопрос: Что если у клиента очень высокий доход, не схожести имени и email, ему 10 лет, он гражданин другой страны. Ожидание: Очень высокая вероятность, что аккаунт мошеннический.**
+
+*Ответ: Для клиента, соответствующего данным характеристикам, получена вероятность мошенничества 78%. Она действительно высока.*
+
+**Вопрос: Какой результат предскажет ваше приложение, если мы возьмем некого довольно  состоятельного молодого человека, который довольно часто обращается в отделения банка, запрашивает крупные суммы кредитов у банка на реализацию нового бизнеса. Отталкиваясь от характеристик, мне кажется, что результат для такого человека будет в районе 10-20%**
+
+*Ответ: Мы попробовали воспроизвести данные для описанного клиента банка, полученная вероятность мошенничества - 11%.*
+
+**Вопрос: В качестве примера можно рассмотреть банк, получивший заявку на открытие нового счета. Банк вводит соответствующие данные, такие как тип счета, местоположение, кредитный рейтинг и другие переменные, в приложение для оценки вероятности потенциального мошенничества. Ожидание: Приложение должно вывести оценку вероятности мошенничества на основе введенных данных. Если этот показатель превышает определенный порог, банк может принять решение о проведении более детального расследования перед утверждением нового счета. Это позволит банку заблаговременно снизить потенциальные риски мошенничества.**
+
+*Ответ: Наше приложение не предназначено для использования с целью оценки риска при открытии клиентом нового счета, оно создавалось для оценивания риска при запросе клиентом у банка определенного кредита. Мы не можем протестировать этот пример, он выходит за рамки нашего функционала.*
+
+**Вопрос: В качестве примера теста, который я хотел бы провести с помощью этого приложения, можно привести подачу ему смеси известных мошеннических и немошеннических счетов, а затем оценить, насколько точно модель может их различать. Ожидание: Для примера, описанного выше, я бы ожидал, что приложение точно классифицирует счета на основе их мошеннического статуса. Успех этого теста будет измеряться точностью, отзывом и общей точностью предсказаний модели.**
+
+*Ответ: Мы проверили двух случайно выбранных клиентов из исходного датасета. Полученная вероятность мошенничества для мошеннического аккаунта - 91%, для нормального - 5%. Приложение достаточно точно их классифицировало.*
+
+**Вопрос: Хотелось бы рассмотреть пример клиента с доходом ниже среднего, этот человек уже давно является клиентом банка, однако сумма кредита с учетом годового заработка неадекватна. Я думаю, что в данном случае клиента скорее признаю мошенником**
+
+*Ответ: Если клиент - давний клиент банка и в целом его поведение вполне нормально, адекватно и не вызывает подозрения, скорее всего система не определит аккаунт как мошеннический на основании одной только большой суммы запрашиваемого кредита. В таких ситуациях вероятность мошенничества - около 10%.*
+
+**Вопрос: Что будет, если моей ОС будет MacOS, годовой доход клиента 0.8 и сходство имени и email 0.8? Я ожидаю, что будет маленький шанс того, что такой аккаунт фейковый, так как обычно мошенники используют виндовс и почту, непохожую на ФИО. **
+
+*Ответ: Наша система не позволяет вычислить вероятность того, что аккаунт мошеннический, на основании всего трех характеристик. Однако при указании достаточно средних значений других параметров и указанных в примере значений мы действительно получаем, что вероятность того, что клиент банка мошенник, всего 7% - как и ожидалось, она очень мала.*
+
+Вопросы от преподавателей:
+
+**Вопрос: Рассмотрите сценарий, где половина показателей подозрительные, а половина нет. Причем в двух вариантах: 1) когда подозрительные показатели -- финансовые, а не подозрительные -- дополнительные (email и т.д.), 2) наоборот. Будут ли отличаться оценки для этих двух вариантов?**
+
+*Ответ: Мы получили низкие показатели мошенничества, подставив подобные данные. В первом варианте (подозрительные финансовые показатели) вероятность мошенничества - 2%, во втором - 3%. Это обусловлено тем, что мы подставляли практически аномально высокие/низкие показатели, в то время как на самом деле большая часть мошеннических аккаунтов по отдельно взятым параметрам находится в пределах нормы, подозрительность не в самих показателях, а в специфических их сочетаниях. Тем более, подозрительные финансовые и нефинансовые показатели должны присутствовать в совокупности, чтобы дать основания подозревать человека в мошенничестве.*
+
+
+
+### Чем мы гордимся в своем приложении
+
+Мы гордимся тем, что у нас получилось разработать приложение, которое, возможно (по нашим оценкам), действительно могло бы быть полезно в банковской сфере. Что мы реализовали большой целостный проект - с предобработкой и анализом данных, с использованием различных методов машинного обучения и системы контроля версий, с пользовательским интерфейсом и развертыванием на действующем сервере. И мы очень рады, что проект позволил нам еще раз вспомнить, структурировать-систематизировать в голове и применить разнообразные знания, которые мы получили за 2 года обучения на майноре.
+
+
